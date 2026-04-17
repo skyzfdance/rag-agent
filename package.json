@@ -1,0 +1,13 @@
+{
+  "name": "rag-monorepo",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter server dev",
+    "build": "pnpm --filter server build",
+    "lint": "pnpm --filter server lint",
+    "lint:fix": "pnpm --filter server lint:fix",
+    "format": "pnpm --filter server format",
+    "format:check": "pnpm --filter server format:check",
+    "type-check": "pnpm --filter server type-check"
+  }
+}

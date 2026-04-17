@@ -1,0 +1,13 @@
+{
+  "watch": ["src", ".env*"],
+  "ext": "ts,json",
+  "ignore": [
+    "node_modules",
+    "tests"
+  ],
+  "exec": "ts-node -r tsconfig-paths/register src/main.ts",
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "delay": 1000
+}
