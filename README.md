@@ -1,6 +1,6 @@
 # 📚 RAG-Agent：企业级数字教材知识库对话系统
 
-> 一个从企业内部项目抽离的 RAG AI Agent 服务端实现，支持原始数字教材文档清洗入库、智能检索与多轮对话。
+> 一个从企业内部项目抽离的 RAG AI Agent 服务端实现，支持数字教材内容入库、分层检索、多轮会话记忆与流式对话输出。
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D18-green.svg)](https://nodejs.org)
@@ -10,13 +10,21 @@
 
 ## 🎯 项目简介
 
-本项目是企业内部「数字教材智能问答」系统的服务端抽离版本，核心实现：
+本项目是企业内部「数字教材智能问答」系统的服务端抽离版本，当前仓库聚焦以下主链路：
 
-```
-原始教材文档 → 清洗分块 → 向量化存储 → 意图识别 → 混合检索 → 对话回复
+```text
+课程/章节数据 → HTML 清洗 → 智能分块 → Tags 提取 → Embedding 向量化
+→ Milvus + SQLite 双写 → Agent Tool 调用 → Retrieval Graph 检索编排 → SSE 流式回复
 ```
 
-> ⚠️ 前端因涉及版权内容未抽离，本项目聚焦 **RAG 服务端核心链路** 的实现与工程化实践。
+除了基础的 RAG 入库与问答，本项目还补齐了：
+
+- 会话列表、历史消息、标题维护
+- 会话记忆压缩与 token 使用监控
+- chunk 元数据查询、修订与删除
+- 检索过程状态回传、媒体引用与来源信息透传
+
+> ⚠️ 前端因涉及版权内容未抽离，本项目依然聚焦 **RAG 服务端核心链路** 的实现与工程化实践。
 
 ---
 
@@ -24,50 +32,62 @@
 
 ```mermaid
 graph LR
-    A[原始教材/MySQL] --> B[数据清洗模块]
-    B --> C[智能分块 + Token计数]
-    C --> D[Embedding向量化]
-    D --> E[(Milvus向量库)]
-    D --> F[(SQLite元数据镜像)]
-    G[用户Query] --> H[意图识别/Query改写]
-    H --> I[向量检索 + 业务数据关联]
-    I --> J[Tags重排序/跨章节关联/Web搜索]
-    J --> K[LLM生成回复 + SSE流式推送]
+    A[MySQL 课程/试题业务库] --> B[入库 Pipeline]
+    B --> C[HTML 清洗 + 智能分块]
+    C --> D[Tags 提取 + Embedding]
+    D --> E[(Milvus)]
+    D --> F[(SQLite 元数据镜像)]
+    G[用户消息] --> H[Session Memory]
+    H --> I[LangChain Agent]
+    I --> J[knowledge_search Tool]
+    J --> K[Retrieval Graph]
+    K --> L[课程检索]
+    K --> M[文档检索]
+    K --> N[试题检索]
+    K --> O[Tavily Web Fallback]
+    L --> P[结果聚合/裁剪]
+    M --> P
+    N --> P
+    O --> P
+    P --> Q[LLM 生成回复 + SSE Data Stream]
 ```
 
 ### 为什么需要三种数据库？
 
-| 数据库     | 角色                  | 设计原因                                                                           |
-| ---------- | --------------------- | ---------------------------------------------------------------------------------- |
-| **MySQL**  | 业务数据源（只读）    | 原有数字教材业务库，不侵入、不修改，仅读取课程/章节/内容元数据                     |
-| **Milvus** | 向量检索引擎          | 存储文本 Embedding，支持高维向量相似度检索、动态 Schema、JSON 字段扩展             |
-| **SQLite** | 元数据镜像 + 补偿存储 | 避免直接操作 MySQL；存储 Milvus 全量元数据镜像，支持双写补偿、WAL 模式、细粒度回滚 |
+| 数据库     | 角色                     | 设计原因                                                                           |
+| ---------- | ------------------------ | ---------------------------------------------------------------------------------- |
+| **MySQL**  | 业务数据源（只读）       | 原有数字教材业务库，不侵入、不修改，仅读取课程、章节、试题等结构化数据             |
+| **Milvus** | 向量检索引擎             | 存储课程 chunk / 文档 chunk 的 Embedding，承担语义检索与过滤                        |
+| **SQLite** | 元数据镜像 + 会话存储层  | 存储 chunk 镜像、会话消息、会话摘要，支撑双写补偿、会话管理和轻量后台运维           |
 
 ---
 
 ## 🧩 后端核心模块
 
-| 模块             | 核心职责                                    | 关键能力                                                |
-| ---------------- | ------------------------------------------- | ------------------------------------------------------- |
-| **RAG 知识入库** | 课程数据清洗 → 分块 → 向量化 → 写入存储     | 富文本解析、语义分块、Token 精准计数、双写补偿          |
-| **AI 检索召回**  | 用户意图识别 → 向量+业务混合检索 → 结果组装 | 意图分类、Query 改写、Tags 重排序、跨章节关联、记忆管理 |
+| 模块               | 核心职责                                        | 关键能力                                                                |
+| ------------------ | ----------------------------------------------- | ----------------------------------------------------------------------- |
+| **RAG 知识入库**   | 课程 / 章节内容清洗、分块、打标、向量化、落库   | HTML 清洗、语义分块、批量写入、SSE 进度推送、Milvus + SQLite 双写       |
+| **AI 检索召回**    | Agent 调用检索 Tool，按图编排课程/文档/试题检索 | 意图分析、Graph 条件分支、结果聚合、充分性评估、联网兜底                |
+| **会话与记忆管理** | 维护 session、消息历史、摘要压缩与 token 水位   | Session 级互斥锁、摘要压缩、最近轮次窗口、历史消息分页                  |
+| **运维接口**       | 管理 chunk、会话、记忆状态                       | chunk 查询/修改/删除、会话 CRUD、手动压缩、token usage 查询、健康检查   |
 
 ---
 
 ## ⚙️ 技术选型
 
-| 组件                 | 选型                           | 备注                                             |
-| -------------------- | ------------------------------ | ------------------------------------------------ |
-| **Embedding 模型**   | 阿里 `text-embedding-v4`       | 默认 1024 维，支持 64~2048 多维度可配置          |
-| **LLM（对话+意图）** | Qwen 3.6 Plus                  | 支持工具调用、多轮记忆、长上下文                 |
-| **LLM（Tags 提取）** | Qwen 3.6 Plus                  | 入库时自动抽取知识点标签                         |
-| **编排框架**         | LangChain + 手写 Pipeline      | LangChain 管理 Prompt/LLM 调用，手写控制复杂流程 |
-| **向量库**           | Milvus 2.6.13                  | 支持动态 Schema、JSON 字段、标量+向量混合过滤    |
-| **业务库**           | MySQL（只读）                  | 不新增表/字段，仅 SELECT 读取业务数据            |
-| **本地存储**         | SQLite (`better-sqlite3`)      | Milvus 元数据镜像，双写 + 补偿机制，WAL 模式     |
-| **HTML 解析**        | `cheerio`                      | 清洗富文本，提取结构化文本/标题/列表             |
-| **并发控制**         | `p-limit`                      | Pipeline 中精确控制 Chunk 并行处理数             |
-| **SSE 断连检测**     | `AbortSignal + Express 中间件` | 客户端断连时自动中止下游 LLM/DB 调用，节省资源   |
+| 组件                   | 选型                                 | 备注                                                               |
+| ---------------------- | ------------------------------------ | ------------------------------------------------------------------ |
+| **Embedding 模型**     | 阿里 `text-embedding-v4`             | 默认 1024 维，可通过环境变量调整                                   |
+| **LLM（对话+意图）**   | OpenAI 兼容接口模型                  | 通过 `OPENAI_BASE_URL` + `CHAT_MODEL_NAME` 适配百炼 / OpenAI 兼容网关 |
+| **编排框架**           | LangChain + LangGraph                | Agent Tool Calling + Retrieval Graph 条件路由                      |
+| **流式输出协议**       | Vercel AI SDK Data Stream            | 聊天主接口返回 SSE，附带 sources / mediaRefs / exercisePreview     |
+| **向量库**             | Milvus 2.6.13                        | 启动时自动 ensure collection，支持课程 / 文档两个 collection        |
+| **业务库**             | MySQL（只读）                        | 查询课程元数据、章节内容、试题资源                                 |
+| **本地存储**           | SQLite (`better-sqlite3`)            | chunk 镜像、chat_sessions、chat_messages                           |
+| **HTML 解析**          | `cheerio`                            | 清洗教材富文本，提取结构化正文                                     |
+| **参数校验/配置兜底**  | `zod` + 自定义 env 工具              | 集中式配置读取，环境变量非法值直接 fail fast                       |
+| **并发控制与限流**     | `p-limit` + 自定义 rate limiter      | 控制入库并发、模型 RPM/TPM、Embedding RPM/TPM                      |
+| **SSE 断连感知**       | `AbortSignal + Express 中间件`       | 客户端断连时自动终止下游 LLM / Embedding / 检索调用                |
 
 ---
 
@@ -77,7 +97,7 @@ graph LR
 
 ```bash
 # Node.js >= 18
-# Docker & Docker Compose
+# pnpm >= 9
 # MySQL 5.7+（已有业务数据）
 # Milvus 2.6.13
 ```
@@ -86,11 +106,12 @@ graph LR
 
 ```bash
 # 启动 Milvus（推荐 Docker）
-# 从 https://github.com/milvus-io/milvus/releases 下载 docker-compose.yml
-docker-compose up -d
+# 可参考 Milvus 官方 docker compose 方案
 
 # MySQL 请自行准备业务数据
-# 参考: server/src/modules/course/course.service.ts 中的 SQL 示例
+# 课程/试题查询逻辑可参考：
+# - server/src/modules/course/course.service.ts
+# - server/src/modules/retrieval/services/exercise-retrieval.service.ts
 ```
 
 ### 3️⃣ 安装与运行
@@ -100,35 +121,98 @@ docker-compose up -d
 git clone <your-repo>
 cd rag-agent
 
-# 安装依赖
-npm install
+# 安装依赖（workspace 根目录执行）
+pnpm install
 
 # 配置环境变量
-cp .env.example .env
-# 编辑 .env：配置 MySQL / Milvus / LLM Key 等
+cp server/.env.example server/.env
+# 编辑 server/.env：配置 MySQL / Milvus / LLM / Tavily 等
 
-# 启动服务（开发模式）
-npm run dev
+# 开发模式
+pnpm dev
 
-# 或构建后启动
-npm run build && npm start
+# 类型检查 / lint
+pnpm type-check
+pnpm lint
+
+# 构建
+pnpm build
+
+# 生产启动
+node server/dist/main.js
 ```
 
-### 4️⃣ 核心接口示例
+### 4️⃣ 关键环境变量
+
+```bash
+# LLM / Embedding
+OPENAI_API_KEY=
+OPENAI_BASE_URL=
+CHAT_MODEL_NAME=
+EMBEDDINGS_MODEL_NAME=
+
+# Milvus
+MILVUS_ADDRESS=
+MILVUS_COLLECTION_NAME=
+MILVUS_DOCUMENTS_COLLECTION_NAME=
+EMBEDDING_DIMENSION=
+
+# SQLite
+SQLITE_PATH=
+
+# MySQL
+DB_HOST=
+DB_PORT=
+DB_USER=
+DB_PASSWORD=
+DB_NAME=
+
+# Retrieval / Memory
+KNOWLEDGE_SEARCH_TOP_K=
+DOCUMENT_SEARCH_TOP_K=
+RETRIEVAL_MAX_SNIPPETS=
+MEMORY_RECENT_ROUNDS=
+AGENT_RECURSION_LIMIT=
+```
+
+> 服务启动时会自动执行 `ensureCollection()` 和 SQLite schema 初始化，因此首次启动前请确保 Milvus 与数据库连接配置正确。
+
+### 5️⃣ 核心接口示例
 
 ```http
-# 全量课程入库（SSE 进度推送）
-POST /api/course/import/all
-Content-Type: application/json
-Accept: text/event-stream
+# 健康检查
+GET /health
 
-# 单章节检索 + 对话
+# 课程全量入库（支持 ?stream 开启 SSE）
+POST /api/ingest/course/101?stream
+
+# 单章节入库（支持 ?stream 开启 SSE）
+POST /api/ingest/course/101/chapter/2001?stream
+
+# 主聊天接口（SSE / data stream）
 POST /api/chat
+Content-Type: application/json
+
 {
-  "query": "函数的闭包是什么？",
-  "courseId": 101,
-  "sessionId": "abc-123"
+  "sessionId": "demo-session",
+  "message": "帮我总结这章里关于闭包的核心知识点",
+  "showReasoning": false
 }
+
+# 会话列表
+GET /api/sessions?page=1&pageSize=20
+
+# 会话消息分页
+GET /api/sessions/demo-session/messages?page=1&pageSize=40
+
+# 手动压缩会话记忆
+POST /api/memory/compact
+{
+  "sessionId": "demo-session"
+}
+
+# 查询 chunk 列表
+GET /api/chunks?page=1&pageSize=20&courseId=101
 ```
 
 ---
@@ -137,80 +221,91 @@ POST /api/chat
 
 ### 🔹 智能分块策略
 
-- ✅ 语义边界优先 + 长度兜底，避免切断知识点
-- ✅ 下限保护：最小块保留完整句子/段落
-- ✅ Token 精准计数：结合 `tiktoken` + 模型实际编码规则
+- ✅ 结合标题层级、正文内容和块大小做语义分块，尽量避免知识点被硬切断
+- ✅ 入库前统一做 HTML 清洗，减少教材富文本噪音对 Embedding 的干扰
+- ✅ 支持课程级、章节级重入库，便于局部更新
 
-### 🔹 Tags 设计与跨章节关联
+### 🔹 Retrieval Graph 检索编排
 
-```ts
-// Tags 多重价值：
-1. 检索后重排序加分 → 提升相关性
-2. 前端知识点标签展示 → 增强可解释性
-3. 天然实现跨章节关联 → 同一 Tag 自动聚合
-4. 基于 Tags 做相关推荐 → "学完这个，你可能还想看"
+```text
+analyze_intent
+→ retrieve_courses
+→ retrieve_documents
+→ retrieve_exercises
+→ merge_filter_rank
+→ assess_sufficiency
+→ maybe_web_fallback
+→ synthesize_context
 ```
 
-### 🔹 Milvus + SQLite 双写补偿机制
+- ✅ 按意图动态走课程、文档、试题、联网兜底等分支
+- ✅ 检索图以节点方式拆分，便于逐段调试与扩展
+- ✅ 每个节点完成后可回传前端进度事件，用于展示检索状态
 
-- ✅ 元数据双写：写入 Milvus 同时写 SQLite 镜像
-- ✅ 补偿任务：定时校验不一致，自动修复
-- ✅ 回滚粒度：支持按 Chapter / Block 级回滚，不影响全量
+### 🔹 Agent + SSE 流式输出
 
-### 🔹 Pipeline 架构设计
+- ✅ 聊天接口使用 LangChain Agent 负责工具调用与回复生成
+- ✅ 输出采用 Vercel AI SDK data stream，天然适合前端流式渲染
+- ✅ 除文本回复外，还会透传 `sources`、`mediaRefs`、`exercisePreview` 等结构化数据
 
-```
-全量入库：Course → Chapters → Blocks → Embedding → Batch Write
-单章更新：写新版本 → 切换指针 → 异步删旧（无感更新）
-检索流程：Query → 意图识别 → 向量检索 + MySQL 补充 → Tags 重排 → LLM 生成
-```
+### 🔹 会话记忆与压缩机制
 
-### 🔹 SSE 进度推送 + 断连感知
+- ✅ SQLite 持久化保存会话、消息和摘要，不依赖外部缓存
+- ✅ 基于最近轮次窗口 + 历史摘要，控制长对话上下文体积
+- ✅ 按 session 维度加互斥锁，避免并发写入导致消息顺序错乱
+- ✅ 基于 `prompt_tokens` 水位和消息数量双条件触发压缩
 
-- ✅ 中间件注入 `AbortSignal`，客户端断开自动终止下游
-- ✅ Pipeline 各阶段 `progress.emit()`，实时推送处理进度
-- ✅ 错误隔离：单 Chunk 失败不影响整体任务
+### 🔹 Milvus + SQLite 双写补偿
 
-### 🔹 检索对话与记忆管理
+- ✅ 课程 chunk 写入 Milvus 的同时写入 SQLite 镜像
+- ✅ chunk 管理接口支持查询、修订 tags / mediaRefs、按 ID 删除
+- ✅ 启动后 SQLite 自动建表，适合单服务部署和轻量运维
 
-- ✅ LangGraph Agent + Tool-Calling 编排复杂决策流程
-- ✅ 两层会话管理：`全局会话` + `课程内子会话`
-- ✅ 超长对话压缩：关键信息摘要 + 滑动窗口保留
+### 🔹 调试与工程化细节
+
+- ✅ 请求级 `AbortSignal`，客户端断连后自动中止长任务
+- ✅ Agent 日志与 SSE 调试写入器，便于排查 Tool/流式输出问题
+- ✅ 配置集中管理，非法环境变量在启动期尽早暴露
+- ✅ 文档 collection 尚未就绪时安全降级，不阻塞主聊天流程
 
 ---
 
 ## 📁 项目结构
 
-```
-├── server/                          # Express 后端
-│   ├── src/
-│   │   ├── main.ts                  # 入口：启动 Express
-│   │   ├── app.ts                   # Express 实例、中间件注册、路由挂载
-│   │   ├── config/                  # 配置集中管理
-│   │   ├── providers/               # 外部服务客户端封装（纯 I/O，无业务逻辑）
-│   │   ├── modules/                 # 业务模块
-│   │   │   ├── ingest/              # RAG 知识入库 Pipeline
-│   │   │   ├── retrieval/           # AI 检索召回 Pipeline
-│   │   │   └── course/              # 课程数据查询
-│   │   ├── shared/                  # 跨模块共享
-│   │   │   ├── types/
-│   │   │   ├── errors/
-│   │   │   └── utils/
-│   │   │
-│   │   └── middleware/              # 中间件
-│   │
-│   ├── package.json
-└── └── tsconfig.json
-
+```text
+├── package.json                     # workspace 根脚本
+├── pnpm-workspace.yaml
+├── README.md
+└── server/
+    ├── package.json
+    ├── .env.example
+    ├── src/
+    │   ├── main.ts                  # 入口：启动服务、初始化 Milvus / SQLite
+    │   ├── app.ts                   # Express 实例、中间件注册、路由挂载
+    │   ├── config/                  # 配置集中管理
+    │   ├── middleware/              # 请求日志、断连中止、统一错误处理
+    │   ├── providers/               # MySQL / Milvus / SQLite / LLM / Embedding / Tavily 封装
+    │   ├── modules/
+    │   │   ├── ingest/              # 入库 Pipeline
+    │   │   ├── retrieval/           # 聊天、记忆、Tool、Graph、检索服务
+    │   │   ├── session/             # 会话管理接口
+    │   │   ├── chunk/               # chunk 管理接口
+    │   │   └── course/              # 课程业务查询
+    │   └── shared/
+    │       ├── errors/
+    │       ├── types/
+    │       └── utils/
+    └── tsconfig.json
 ```
 
 ---
 
 ## 📝 开发规范
 
-- ✅ 所有核心逻辑均含 **中文注释**，说明「为什么这么做」
-- ✅ 关键配置支持 `.env` 环境变量 + 代码默认值兜底
-- ✅ 错误处理统一封装，区分「可重试」与「终止型」错误
+- ✅ 所有核心逻辑尽量保留 **中文注释**，重点解释「为什么这样设计」
+- ✅ 使用 `pnpm workspace` 统一管理脚本，根目录命令默认透传到 `server`
+- ✅ 环境变量通过 `dotenv-flow` + 配置模块集中读取，避免散落读取
+- ✅ 错误处理统一收敛到中间件，普通 JSON 接口返回统一结构，聊天接口保留原生 SSE data stream
 
 ---
 
