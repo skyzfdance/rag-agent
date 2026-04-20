@@ -331,6 +331,44 @@ export async function deleteByFilter(filter: string, collectionName?: string) {
 }
 
 /**
+ * 按主键 ID 查询单条记录（含全部字段）
+ *
+ * 用于需要读取完整记录后再 upsert 更新的场景。
+ *
+ * @param id - chunk 主键
+ * @param collectionName - 目标 Collection 名称，默认使用配置中的名称
+ * @returns 匹配的记录，不存在时返回 undefined
+ */
+export async function getById(id: string, collectionName?: string): Promise<RowData | undefined> {
+  const name = collectionName || getCollectionName();
+  const milvus = getClient();
+
+  const result = await milvus.query({
+    collection_name: name,
+    filter: `id == "${id}"`,
+    output_fields: ['*'],
+    limit: 1,
+  });
+
+  return result.data[0];
+}
+
+/**
+ * 按主键 ID 删除单条记录
+ *
+ * @param id - chunk 主键
+ * @param collectionName - 目标 Collection 名称，默认使用配置中的名称
+ * @returns 删除结果
+ */
+export async function deleteById(id: string, collectionName?: string) {
+  const milvus = getClient();
+  return milvus.delete({
+    collection_name: collectionName || getCollectionName(),
+    ids: [id],
+  });
+}
+
+/**
  * 关闭 Milvus 客户端连接
  *
  * 在进程退出或测试清理时调用。

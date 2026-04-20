@@ -1,3 +1,5 @@
+import type { MediaRef } from '@/shared/types/index';
+
 /** 聊天消息 */
 export interface ChatMessage {
   /** 消息自增 ID */
@@ -24,4 +26,175 @@ export interface TokenUsage {
   sessionAvailableTokens: number;
   /** 当前会话已用 token（上一轮 API 返回的 prompt_tokens） */
   sessionUsedTokens: number;
+}
+
+// ──────────────────────────────────────────────
+// 检索领域模型
+// ──────────────────────────────────────────────
+
+/**
+ * 统一检索命中 chunk
+ *
+ * 屏蔽底层 Collection 差异，课程 chunk 和文档 chunk 共用同一结构。
+ */
+export interface RetrievedChunk {
+  /** 数据来源类型 */
+  sourceType: 'course' | 'document';
+  /** chunk 主键（Milvus 中的 id） */
+  sourceId: string;
+  /** 向量相似度分数 */
+  score: number;
+
+  /** 课程 ID */
+  courseId?: number;
+  /** 章节 ID */
+  chapterId?: number;
+
+  /** 章节标题 */
+  title?: string;
+  /** 标题路径，如 "第二章 > 第一节 > 一、概述" */
+  headingPath?: string;
+  /** 纯文本内容 */
+  content: string;
+
+  /** 多媒体资源引用 */
+  mediaRefs: MediaRef[];
+
+  /** 文档元数据（阶段四启用） */
+  documentMeta?: {
+    /** 文档 ID */
+    documentId?: string;
+    /** 文件名 */
+    fileName?: string;
+    /** 页码 */
+    page?: number;
+    /** 段落标题 */
+    sectionTitle?: string;
+  };
+}
+
+/**
+ * 检索来源信息
+ *
+ * 用于前端展示"回答来自哪里"。
+ */
+export interface RetrievedSource {
+  /** 来源类型 */
+  type: 'course' | 'document' | 'exercise' | 'web';
+  /** 展示标签（如标题路径、文件名等） */
+  label: string;
+  /** 课程 ID */
+  courseId?: number;
+  /** 章节 ID */
+  chapterId?: number;
+  /** 文档来源元数据（仅 type='document' 时填充） */
+  documentMeta?: {
+    /** 文档 ID */
+    documentId?: string;
+    /** 原始文件名 */
+    fileName?: string;
+    /** 页码 */
+    page?: number;
+    /** 段落标题 */
+    sectionTitle?: string;
+  };
+  /** 网页 URL（仅 type='web' 时填充） */
+  url?: string;
+}
+
+// ──────────────────────────────────────────────
+// 试题领域模型
+// ──────────────────────────────────────────────
+
+/** 试题题目类型 */
+export type ExerciseType = 'single' | 'multiple' | 'judge' | 'answer' | 'fill';
+
+/**
+ * 检索命中的试题
+ *
+ * 从 MySQL fa_course_questions 表查询，经 fa_textbooks_chapter_resource 关联课程章节。
+ */
+export interface RetrievedExercise {
+  /** 试题 ID */
+  id: number;
+  /** 课程 ID（来自 chapter_resource 关联） */
+  courseId: number;
+  /** 章节 ID（来自 chapter_resource 关联） */
+  chapterId: number;
+  /** 题目类型 */
+  type: ExerciseType;
+  /** 题干 */
+  stem: string;
+  /** 选项列表（选择题/判断题有值） */
+  options?: string[];
+  /** 正确答案 */
+  answer: string;
+  /** 答案解析 */
+  explanation?: string;
+}
+
+/**
+ * 试题前端预览
+ *
+ * 给前端的轻量结构，不包含答案与解析，避免泄漏。
+ */
+export interface RetrievedExercisePreview {
+  /** 试题 ID */
+  id: number;
+  /** 课程 ID */
+  courseId: number;
+  /** 章节 ID */
+  chapterId: number;
+  /** 题干 */
+  stem: string;
+  /** 题目类型 */
+  type: ExerciseType;
+}
+
+// ──────────────────────────────────────────────
+// 联网搜索结果
+// ──────────────────────────────────────────────
+
+/**
+ * 联网搜索命中结果
+ *
+ * 来自 Tavily API，用于知识库检索不足时的兜底。
+ */
+export interface RetrievedWebResult {
+  /** 页面标题 */
+  title: string;
+  /** 页面 URL */
+  url: string;
+  /** 摘要片段 */
+  snippet: string;
+  /** 相关度评分 */
+  score: number;
+}
+
+/**
+ * Retrieval 最终结果
+ *
+ * 对外暴露的收口结构，主 Agent 只依赖此对象。
+ */
+export interface RetrievalResult {
+  /** 给 LLM 的格式化上下文文本 */
+  llmContext: string;
+  /** 给前端的结构化数据 */
+  frontendPayload: {
+    /** 多媒体资源引用 */
+    mediaRefs: MediaRef[];
+    /** 来源信息 */
+    sources: RetrievedSource[];
+    /** 试题预览（不含答案与解析） */
+    exercisePreview: RetrievedExercisePreview[];
+  };
+  /** 检索过程中的错误记录，无错误时为空数组 */
+  errors: Array<{
+    /** 出错的节点名称 */
+    node: string;
+    /** 数据来源类型 */
+    sourceType?: string;
+    /** 错误信息 */
+    message: string;
+  }>;
 }
