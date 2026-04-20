@@ -74,6 +74,35 @@ export function requireInt(key: string, defaultValue?: number): number {
 }
 
 /**
+ * 读取必填浮点数环境变量
+ *
+ * 变量不存在、为空、或无法解析为有限浮点数时直接抛错。
+ *
+ * @param key - 环境变量名
+ * @param defaultValue - 缺失时的默认值（传入则变为可选）
+ * @returns 解析后的浮点数值
+ */
+export function requireFloat(key: string, defaultValue?: number): number {
+  const raw = process.env[key];
+
+  // 未设置 → 看有没有默认值
+  if (raw === undefined || raw === '') {
+    if (defaultValue !== undefined) {
+      return defaultValue;
+    }
+    throw new Error(`缺少必填环境变量: ${key}`);
+  }
+
+  const parsed = parseFloat(raw);
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`环境变量 ${key} 必须为数字，当前值: "${raw}"`);
+  }
+
+  return parsed;
+}
+
+/**
  * 读取枚举类型的环境变量
  *
  * 变量值不在合法枚举范围内时直接抛错。

@@ -22,21 +22,23 @@ function ensureDir(): void {
  *
  * 每条日志为一行 JSON（JSONL 格式），方便按行读取和 grep 过滤。
  * 所有字段均为可选，按实际场景传入。
- *
+ * 只在开发模式下，保存日志
  * @param entry - 日志条目
  */
 export function appendAgentLog(entry: Record<string, unknown>): void {
-  ensureDir();
+  if (process.env.NODE_ENV === 'development') {
+    ensureDir();
 
-  const line = JSON.stringify({
-    timestamp: new Date().toISOString(),
-    ...entry,
-  });
+    const line = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      ...entry,
+    });
 
-  // 异步追加，不阻塞主流程；写入失败仅打印到 stderr
-  fs.appendFile(LOG_FILE, line + '\n', (err) => {
-    if (err) {
-      console.error('[agent-logger] 日志写入失败:', err);
-    }
-  });
+    // 异步追加，不阻塞主流程；写入失败仅打印到 stderr
+    fs.appendFile(LOG_FILE, line + '\n', (err) => {
+      if (err) {
+        console.error('[agent-logger] 日志写入失败:', err);
+      }
+    });
+  }
 }

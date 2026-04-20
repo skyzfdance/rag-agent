@@ -1,4 +1,4 @@
-import { requireInt } from '@/shared/utils/env';
+import { requireInt, requireFloat } from '@/shared/utils/env';
 
 /** 模型能力参数 */
 export interface ModelCapability {
@@ -22,22 +22,32 @@ export interface ModelCapability {
 
 /** Token 压缩阈值配置 */
 export interface TokenThreshold {
-  /** 预警阈值百分比（前端可提示用户） */
-  warnPercent: number;
   /** 强制压缩触发百分比 */
   hardPercent: number;
-  /** 压缩后回落目标百分比 */
-  compactTargetPercent: number;
 }
 
 /** Tool 检索配置 */
 export interface ToolSearchConfig {
-  /** 知识库检索返回条数 */
+  /** 课程知识库检索返回条数 */
   knowledgeSearchTopK: number;
+  /** 文档知识库检索返回条数 */
+  documentSearchTopK: number;
   /** 联网搜索最大返回条数 */
   webSearchMaxResults: number;
   /** 联网搜索单条结果最大字符数 */
   webSearchMaxChars: number;
+}
+
+/** 检索预算配置 */
+export interface RetrievalBudgetConfig {
+  /** 最大保留片段数 */
+  maxSnippets: number;
+  /** llmContext 最大字符数 */
+  maxChars: number;
+  /** 最低相似度分数阈值，低于此值直接丢弃 */
+  minScore: number;
+  /** 最大保留试题数 */
+  maxExercises: number;
 }
 
 /** 检索 Pipeline 配置 */
@@ -54,6 +64,8 @@ export interface RetrievalConfig {
   memoryRecentRounds: number;
   /** Tool 检索配置 */
   toolSearch: ToolSearchConfig;
+  /** 检索预算配置（merge_filter_rank / synthesize_context 使用） */
+  retrievalBudget: RetrievalBudgetConfig;
 }
 
 /**
@@ -77,16 +89,21 @@ export function getRetrievalConfig(): RetrievalConfig {
     },
     answerMaxOutputTokens: requireInt('ANSWER_MAX_OUTPUT_TOKENS', 8192),
     threshold: {
-      warnPercent: requireInt('TOKEN_WARN_THRESHOLD_PERCENT', 70),
       hardPercent: requireInt('TOKEN_HARD_THRESHOLD_PERCENT', 85),
-      compactTargetPercent: requireInt('TOKEN_COMPACT_TARGET_PERCENT', 55),
     },
     agentRecursionLimit: requireInt('AGENT_RECURSION_LIMIT', 20),
     memoryRecentRounds: requireInt('MEMORY_RECENT_ROUNDS', 10),
     toolSearch: {
       knowledgeSearchTopK: requireInt('KNOWLEDGE_SEARCH_TOP_K', 5),
+      documentSearchTopK: requireInt('DOCUMENT_SEARCH_TOP_K', 5),
       webSearchMaxResults: requireInt('WEB_SEARCH_MAX_RESULTS', 3),
       webSearchMaxChars: requireInt('WEB_SEARCH_MAX_CHARS', 500),
+    },
+    retrievalBudget: {
+      maxSnippets: requireInt('RETRIEVAL_MAX_SNIPPETS', 10),
+      maxChars: requireInt('RETRIEVAL_MAX_CHARS', 8000),
+      minScore: requireFloat('RETRIEVAL_MIN_SCORE', 0.5),
+      maxExercises: requireInt('RETRIEVAL_MAX_EXERCISES', 5),
     },
   };
 }

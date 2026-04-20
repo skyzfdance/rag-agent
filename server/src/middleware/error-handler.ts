@@ -32,6 +32,15 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
     return;
   }
 
+  // AbortError 兜底：客户端断连导致的中止不属于真正的服务器错误
+  if (err.name === 'AbortError') {
+    console.log(`[abort] 请求已中止: ${_req.method} ${_req.originalUrl}`);
+    if (!res.headersSent) {
+      res.status(499).end();
+    }
+    return;
+  }
+
   // 未知错误：一律当作系统错误处理
   console.error('[未知错误]', err.stack ?? err);
 

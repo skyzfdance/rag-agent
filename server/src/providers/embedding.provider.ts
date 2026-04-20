@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { getLLMConfig, getMilvusConfig } from '@/config/index';
+import { LLMRateLimiter } from '@/shared/utils/rate-limiter';
 
 /**
  * 阿里云百炼 Embedding 接口单次最大输入数量
@@ -10,6 +11,40 @@ const BATCH_SIZE = 10;
 
 /** OpenAI 兼容客户端单例 */
 let client: OpenAI | null = null;
+
+/** Embedding RPM + TPM 速率限制器单例 */
+let embeddingLimiter: LLMRateLimiter | null = null;
+
+/**
+ * 获取 Embedding 速率限制器（单例模式）
+ *
+ * 使用 llm config 中的 EMBEDDING_RPM / EMBEDDING_TPM 初始化，
+ * 与 chat 模型的限制器完全独立。
+ *
+ * @returns LLMRateLimiter 实例
+ */
+function getEmbeddingLimiter(): LLMRateLimiter {
+  if (!embeddingLimiter) {
+    const config = getLLMConfig();
+    embeddingLimiter = new LLMRateLimiter(config.embeddingRpm, config.embeddingTpm);
+  }
+  return embeddingLimiter;
+}
+
+/**
+ * 创建经过速率限制的 fetch 函数（Embedding 专用）
+ *
+ * 注入到 OpenAI 客户端，让每次 HTTP 请求（包括 SDK 内置重试）
+ * 都经过 RPM/TPM 限流检查，避免重试绕过限流器。
+ *
+ * @returns 包装后的 fetch 函数
+ */
+function createEmbeddingRateLimitedFetch(): typeof globalThis.fetch {
+  return async (input, init) => {
+    await getEmbeddingLimiter().acquire();
+    return globalThis.fetch(input, init);
+  };
+}
 
 /**
  * 获取 OpenAI 兼容客户端实例（单例模式）
@@ -26,6 +61,8 @@ function getClient(): OpenAI {
     client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseUrl,
+      // 注入限流 fetch，让 SDK 内置重试也经过 RPM/TPM 限流器
+      fetch: createEmbeddingRateLimitedFetch(),
     });
   }
   return client;
@@ -35,6 +72,7 @@ function getClient(): OpenAI {
  * 调用 Embedding API 的底层方法
  *
  * 单次调用，input 数量不得超过 BATCH_SIZE。
+ * 调用前检查 RPM/TPM 限流，调用后上报实际 token 用量。
  *
  * @param input - 文本或文本数组
  * @param signal - 可选的中止信号
@@ -47,6 +85,7 @@ async function createEmbeddings(
   const milvusConfig = getMilvusConfig();
   const llmConfig = getLLMConfig();
 
+  // RPM/TPM 限流已由注入客户端的 fetch 处理，这里无需手动 acquire
   const response = await getClient().embeddings.create(
     {
       model: llmConfig.embeddingsModelName,
@@ -55,6 +94,11 @@ async function createEmbeddings(
     },
     { signal }
   );
+
+  // 调用后：上报实际 token 用量到 TPM 限流器
+  if (response.usage?.total_tokens) {
+    getEmbeddingLimiter().reportUsage(response.usage.total_tokens);
+  }
 
   return response.data.sort((a, b) => a.index - b.index).map((item) => item.embedding);
 }

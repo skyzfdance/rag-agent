@@ -1,4 +1,4 @@
-import { requireString } from '@/shared/utils/env';
+import { requireInt, requireString } from '@/shared/utils/env';
 
 /** LLM 与 Embedding 模型配置 */
 export interface LLMConfig {
@@ -10,12 +10,17 @@ export interface LLMConfig {
   chatModelName: string;
   /** Embedding 模型名称 */
   embeddingsModelName: string;
+  /** Embedding 模型每分钟请求数限制 */
+  embeddingRpm: number;
+  /** Embedding 模型每分钟 token 数限制 */
+  embeddingTpm: number;
 }
 
 /**
  * 从环境变量读取 LLM / Embedding 模型配置
  *
- * 四项均为必填，缺失时启动阶段直接报错（fail-fast）。
+ * apiKey / baseUrl / chatModelName / embeddingsModelName 为必填，
+ * embeddingRpm / embeddingTpm 有默认值。
  *
  * @returns LLM 配置对象
  */
@@ -25,5 +30,7 @@ export function getLLMConfig(): LLMConfig {
     baseUrl: requireString('OPENAI_BASE_URL'),
     chatModelName: requireString('CHAT_MODEL_NAME'),
     embeddingsModelName: requireString('EMBEDDINGS_MODEL_NAME'),
+    embeddingRpm: requireInt('EMBEDDING_RPM', 1800),
+    embeddingTpm: requireInt('EMBEDDING_TPM', 1200000),
   };
 }

@@ -8,8 +8,10 @@ export interface MilvusConfig {
   username: string;
   /** Milvus 密码（可选） */
   password: string;
-  /** 知识库 Collection 名称 */
+  /** 课程知识库 Collection 名称 */
   collectionName: string;
+  /** 文档知识库 Collection 名称 */
+  documentsCollectionName: string;
   /** Embedding 向量维度，默认 1024 */
   embeddingDimension: number;
 }
@@ -35,6 +37,7 @@ export function getMilvusConfig(): MilvusConfig {
     username: optionalString('MILVUS_USERNAME'),
     password: optionalString('MILVUS_PASSWORD'),
     collectionName: optionalString('MILVUS_COLLECTION_NAME', 'course_knowledge'),
+    documentsCollectionName: optionalString('MILVUS_DOCUMENTS_COLLECTION_NAME', 'documents'),
     embeddingDimension: requireEnum('EMBEDDING_DIMENSION', VALID_DIMENSIONS, DEFAULT_DIMENSION),
   };
 }

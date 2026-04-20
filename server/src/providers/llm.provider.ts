@@ -1,6 +1,55 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { getLLMConfig } from '@/config/index';
+import { getRetrievalConfig } from '@/config/retrieval';
+import { LLMRateLimiter } from '@/shared/utils/rate-limiter';
+
+/** RPM + TPM 双维度速率限制器单例 */
+let rateLimiter: LLMRateLimiter | null = null;
+
+/**
+ * 获取速率限制器（单例模式）
+ *
+ * 使用 retrieval config 中的 MODEL_RPM / MODEL_TPM 初始化。
+ * 所有 ChatOpenAI 实例共享同一个限制器，防止多路并发超限被 429。
+ *
+ * @returns LLMRateLimiter 实例
+ */
+function getRateLimiter(): LLMRateLimiter {
+  if (!rateLimiter) {
+    const { model } = getRetrievalConfig();
+    rateLimiter = new LLMRateLimiter(model.rpm, model.tpm);
+  }
+  return rateLimiter;
+}
+
+/**
+ * 创建经过速率限制的 fetch 函数
+ *
+ * 在每次 HTTP 请求前检查 RPM 和 TPM 两个维度，
+ * 任一超限则阻塞等待。注入到 ChatOpenAI 的 configuration.fetch，
+ * 对上层调用透明。
+ *
+ * @returns 包装后的 fetch 函数
+ */
+function createRateLimitedFetch(): typeof globalThis.fetch {
+  return async (input, init) => {
+    await getRateLimiter().acquire();
+    return globalThis.fetch(input, init);
+  };
+}
+
+/**
+ * 上报本次 LLM 调用的实际 token 用量
+ *
+ * 调用方在 LLM 返回结果后调用此函数，将实际 token 消耗
+ * 扣减到 TPM 令牌桶。如果累计用量超限，后续调用会被自动阻塞。
+ *
+ * @param tokens - 本次调用实际消耗的 token 数（prompt + completion）
+ */
+export function reportTokenUsage(tokens: number): void {
+  getRateLimiter().reportUsage(tokens);
+}
 
 /** LLM 模型单例 */
 let chatModel: ChatOpenAI | null = null;
@@ -31,6 +80,7 @@ export function getChatModel(): ChatOpenAI {
       temperature: 0,
       configuration: {
         baseURL: config.baseUrl,
+        fetch: createRateLimitedFetch(),
       },
     });
   }
@@ -64,6 +114,7 @@ export function getStreamingChatModel(): ChatOpenAI {
       streamUsage: true,
       configuration: {
         baseURL: config.baseUrl,
+        fetch: createRateLimitedFetch(),
       },
     });
   }
@@ -93,6 +144,14 @@ export async function chat(
     [new SystemMessage(systemPrompt), new HumanMessage(userMessage)],
     { signal }
   );
+
+  // 上报实际 token 用量到 TPM 限流器
+  const usageMeta = response.usage_metadata as
+    | { input_tokens?: number; output_tokens?: number; total_tokens?: number }
+    | undefined;
+  if (usageMeta?.total_tokens) {
+    reportTokenUsage(usageMeta.total_tokens);
+  }
 
   // response.content 可能是 string 或 MessageContentComplex[]，这里取文本
   return typeof response.content === 'string'

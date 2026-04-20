@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { tool } from '@langchain/core/tools';
+import { tool } from 'langchain';
 import { tavilySearch } from '@/providers/tavily.provider';
 import { getRetrievalConfig } from '@/config/retrieval';
 
