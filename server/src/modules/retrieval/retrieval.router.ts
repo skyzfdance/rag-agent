@@ -1,8 +1,8 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import type { Request, Response } from 'express';
-import { getSignal } from '@/middleware/abort-on-disconnect';
+import { sendSuccess } from '@/shared/utils/response';
 import { AppError } from '@/shared/errors/app-error';
-import { streamChat } from './retrieval.service';
+import { abortActiveChat, streamChat } from './retrieval.service';
 
 const router: ExpressRouter = Router();
 
@@ -28,12 +28,26 @@ router.post('/', async (req: Request, res: Response) => {
     throw new AppError('缺少 sessionId 或 message', 400);
   }
 
-  const signal = getSignal(req);
   await streamChat(sessionId, message, res, {
-    signal,
     // 兼容前端传入字符串 "true"/"false" 的情况
     showReasoning: showReasoning === true || showReasoning === 'true',
   });
+});
+
+/**
+ * POST /api/chat/abort
+ *
+ * 主动停止当前会话的活跃生成任务。
+ */
+router.post('/abort', async (req: Request, res: Response) => {
+  const { sessionId } = req.body as { sessionId?: string };
+
+  if (!sessionId) {
+    throw new AppError('缺少 sessionId', 400);
+  }
+
+  const result = await abortActiveChat(sessionId);
+  sendSuccess(res, result);
 });
 
 export default router;

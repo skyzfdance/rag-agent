@@ -13,7 +13,7 @@ const SYSTEM_PROMPT = `你是一个知识点提取助手。从给定的课程文
  * @returns 知识点标签数组
  */
 export async function extractTags(content: string, signal?: AbortSignal): Promise<string[]> {
-  const raw = await chat(SYSTEM_PROMPT, content, signal);
+  const raw = await chat(SYSTEM_PROMPT, content, { signal });
   try {
     const tags = JSON.parse(raw.trim());
     if (Array.isArray(tags)) return tags.filter((t) => typeof t === 'string');
