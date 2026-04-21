@@ -28,6 +28,12 @@ export interface TokenUsage {
   sessionUsedTokens: number;
 }
 
+/** assistant 终态状态 */
+export type AssistantStatus = 'completed' | 'truncated' | 'aborted' | 'error' | 'no_reply';
+
+/** 结构化持久化 schema 版本 */
+export const STRUCTURED_MESSAGE_SCHEMA_VERSION = 1;
+
 // ──────────────────────────────────────────────
 // 检索领域模型
 // ──────────────────────────────────────────────
@@ -100,6 +106,45 @@ export interface RetrievedSource {
   };
   /** 网页 URL（仅 type='web' 时填充） */
   url?: string;
+}
+
+/** 允许持久化的 assistant part */
+export type PersistedAssistantPart =
+  | {
+      type: 'text';
+      text: string;
+    }
+  | {
+      type: 'reasoning';
+      text: string;
+    }
+  | {
+      type: 'data-media-refs';
+      data: MediaRef[];
+    }
+  | {
+      type: 'data-sources';
+      data: RetrievedSource[];
+    }
+  | {
+      type: 'data-exercise-preview';
+      data: RetrievedExercisePreview[];
+    };
+
+/** assistant 历史回放元数据 */
+export interface StoredMessageMetadata {
+  /** 结构版本 */
+  schemaVersion: number;
+  /** 本轮思考/处理总耗时 */
+  thinkingDurationMs?: number;
+  /** assistant 终态 */
+  assistantStatus?: AssistantStatus;
+  /** 是否为未正常完成的异常轮次 */
+  isIncomplete?: boolean;
+  /** 轮次 ID */
+  turnId?: string;
+  /** 是否允许进入后续模型记忆 */
+  memoryEligible?: boolean;
 }
 
 // ──────────────────────────────────────────────

@@ -2,7 +2,15 @@ import { getDb } from '@/providers/sqlite.provider';
 import { getRetrievalConfig } from '@/config/retrieval';
 import { chat } from '@/providers/llm.provider';
 import { appendAgentLog } from '@/shared/utils/agent-logger';
-import type { ChatMessage, SessionMemory, TokenUsage } from './retrieval.types';
+import type {
+  AssistantStatus,
+  ChatMessage,
+  PersistedAssistantPart,
+  SessionMemory,
+  StoredMessageMetadata,
+  TokenUsage,
+} from './retrieval.types';
+import { STRUCTURED_MESSAGE_SCHEMA_VERSION } from './retrieval.types';
 
 // ──────────────────────────────────────────────
 // 类型
@@ -75,7 +83,41 @@ export async function withSessionMutex<T>(sessionId: string, fn: () => Promise<T
  */
 function ensureSession(sessionId: string): void {
   getDb()
-    .prepare('INSERT OR IGNORE INTO chat_sessions (session_id, created_at) VALUES (?, unixepoch())')
+    .prepare(
+      'INSERT OR IGNORE INTO chat_sessions (session_id, created_at, updated_at, last_message_at) VALUES (?, unixepoch(), unixepoch(), unixepoch())'
+    )
+    .run(sessionId);
+}
+
+/**
+ * 检查会话是否仍存在
+ *
+ * 删除会话后，后续异步写入必须跳过，避免重新写出孤儿消息或僵尸会话。
+ *
+ * @param sessionId - 会话 ID
+ * @returns 会话是否存在
+ */
+function hasSessionUnsafe(sessionId: string): boolean {
+  const row = getDb()
+    .prepare('SELECT session_id FROM chat_sessions WHERE session_id = ?')
+    .get(sessionId) as { session_id: string } | undefined;
+
+  return !!row;
+}
+
+/**
+ * 更新会话活跃时间
+ *
+ * user 入库和 assistant 终态入库都应刷新 last_message_at，
+ * 以保证列表按最近活跃时间排序。
+ *
+ * @param sessionId - 会话 ID
+ */
+function touchSessionUnsafe(sessionId: string): void {
+  getDb()
+    .prepare(
+      'UPDATE chat_sessions SET updated_at = unixepoch(), last_message_at = unixepoch() WHERE session_id = ?'
+    )
     .run(sessionId);
 }
 
@@ -105,7 +147,7 @@ function loadMemory(sessionId: string): SessionMemory {
   // 读取最近 N 轮消息（1 轮 = user + assistant，所以取 2N 条）
   const rows = db
     .prepare(
-      'SELECT id, role, content, created_at FROM chat_messages WHERE session_id = ? AND id > ? ORDER BY id DESC LIMIT ?'
+      'SELECT id, role, content, created_at FROM chat_messages WHERE session_id = ? AND id > ? AND memory_eligible = 1 ORDER BY id DESC LIMIT ?'
     )
     .all(sessionId, compactedId, memoryRecentRounds * 2) as MessageRow[];
 
@@ -150,7 +192,9 @@ function shouldCompact(sessionId: string): boolean {
 
   // 条件 1：消息数溢出
   const row = db
-    .prepare('SELECT COUNT(*) as count FROM chat_messages WHERE session_id = ? AND id > ?')
+    .prepare(
+      'SELECT COUNT(*) as count FROM chat_messages WHERE session_id = ? AND id > ? AND memory_eligible = 1'
+    )
     .get(sessionId, compactedId) as { count: number };
 
   if (row.count > keepCount) return true;
@@ -268,7 +312,7 @@ async function compactMemoryUnsafe(sessionId: string): Promise<void> {
   // ② 加载水位线之后的所有消息（正序）
   const allMessages = db
     .prepare(
-      'SELECT id, role, content, created_at FROM chat_messages WHERE session_id = ? AND id > ? ORDER BY id ASC'
+      'SELECT id, role, content, created_at FROM chat_messages WHERE session_id = ? AND id > ? AND memory_eligible = 1 ORDER BY id ASC'
     )
     .all(sessionId, compactedId) as MessageRow[];
 
@@ -363,17 +407,19 @@ export async function prepareMemoryForRequest(sessionId: string): Promise<Sessio
  * @param userContent - 用户消息内容
  * @param assistantContent - AI 回复内容
  */
-export function saveMessagesUnsafe(
+export function saveUserMessageUnsafe(
   sessionId: string,
-  userContent: string,
-  assistantContent: string
-): void {
+  turnId: string,
+  userContent: string
+): boolean {
   const db = getDb();
-  const stmt = db.prepare('INSERT INTO chat_messages (session_id, role, content) VALUES (?, ?, ?)');
+  let saved = false;
 
-  // 事务保证两条消息原子写入
   db.transaction(() => {
-    // 首次保存时，截取用户消息前 30 字符作为会话标题
+    if (!hasSessionUnsafe(sessionId)) {
+      return;
+    }
+
     const msgCount = db
       .prepare('SELECT COUNT(*) AS cnt FROM chat_messages WHERE session_id = ?')
       .get(sessionId) as { cnt: number };
@@ -382,9 +428,81 @@ export function saveMessagesUnsafe(
       db.prepare('UPDATE chat_sessions SET title = ? WHERE session_id = ?').run(title, sessionId);
     }
 
-    stmt.run(sessionId, 'user', userContent);
-    stmt.run(sessionId, 'assistant', assistantContent);
+    db.prepare(
+      'INSERT INTO chat_messages (session_id, turn_id, role, content, memory_eligible) VALUES (?, ?, ?, ?, 0)'
+    ).run(sessionId, turnId, 'user', userContent);
+
+    touchSessionUnsafe(sessionId);
+    saved = true;
   })();
+
+  return saved;
+}
+
+/** assistant 终态落库入参 */
+export interface SaveAssistantMessageInput {
+  /** 会话 ID */
+  sessionId: string;
+  /** 轮次 ID */
+  turnId: string;
+  /** 助手正文 */
+  content: string;
+  /** 最终归档 parts */
+  parts: PersistedAssistantPart[];
+  /** assistant 终态 */
+  status: AssistantStatus;
+  /** 思考/处理总耗时 */
+  thinkingDurationMs: number;
+}
+
+/**
+ * 保存 assistant 终态快照（Unsafe：必须在 withSessionMutex 内调用）
+ *
+ * user 已在请求开始后单独入库，这里只负责 assistant 终态快照，
+ * 并按轮次统一更新 memory_eligible，保证失败轮次整体不进入记忆链路。
+ *
+ * @param input - assistant 终态落库入参
+ */
+export function saveAssistantMessageUnsafe(input: SaveAssistantMessageInput): boolean {
+  const { sessionId, turnId, content, parts, status, thinkingDurationMs } = input;
+  const db = getDb();
+  const memoryEligible = status === 'completed';
+  const metadata: StoredMessageMetadata = {
+    schemaVersion: STRUCTURED_MESSAGE_SCHEMA_VERSION,
+    thinkingDurationMs,
+    assistantStatus: status,
+    isIncomplete: status !== 'completed',
+    turnId,
+    memoryEligible,
+  };
+  let saved = false;
+
+  db.transaction(() => {
+    if (!hasSessionUnsafe(sessionId)) {
+      return;
+    }
+
+    db.prepare(
+      'INSERT INTO chat_messages (session_id, turn_id, role, content, parts_json, meta_json, memory_eligible) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(
+      sessionId,
+      turnId,
+      'assistant',
+      content,
+      JSON.stringify(parts),
+      JSON.stringify(metadata),
+      memoryEligible ? 1 : 0
+    );
+
+    db.prepare(
+      'UPDATE chat_messages SET memory_eligible = ? WHERE session_id = ? AND turn_id = ?'
+    ).run(memoryEligible ? 1 : 0, sessionId, turnId);
+
+    touchSessionUnsafe(sessionId);
+    saved = true;
+  })();
+
+  return saved;
 }
 
 /**
@@ -397,13 +515,15 @@ export function saveMessagesUnsafe(
  * @param promptTokens - API 返回的 prompt_tokens
  */
 export function updatePromptTokens(sessionId: string, promptTokens: number): void {
-  getDb()
-    .prepare(
-      `INSERT INTO chat_sessions (session_id, last_prompt_tokens, created_at)
-       VALUES (?, ?, unixepoch())
-       ON CONFLICT(session_id) DO UPDATE SET last_prompt_tokens = excluded.last_prompt_tokens`
-    )
-    .run(sessionId, promptTokens);
+  const db = getDb();
+  if (!hasSessionUnsafe(sessionId)) {
+    return;
+  }
+
+  db.prepare('UPDATE chat_sessions SET last_prompt_tokens = ? WHERE session_id = ?').run(
+    promptTokens,
+    sessionId
+  );
 }
 
 /**
