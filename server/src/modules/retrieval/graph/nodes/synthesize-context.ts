@@ -84,6 +84,7 @@ export function synthesizeContext(state: RetrievalState): RetrievalStateUpdate {
  * @param exercises - 经裁剪后的试题列表
  * @param webHits - 联网搜索结果
  * @param includeExercises - 是否将试题写入上下文
+ * @param exerciseExposure - 试题暴露策略：'find' 只给题干选项，'explain' 给完整答案解析
  * @param hasErrors - 检索过程中是否有错误
  * @returns 格式化后的 LLM 上下文文本
  */
@@ -92,6 +93,7 @@ function buildLlmContext(
   exercises: RetrievedExercise[],
   webHits: RetrievedWebResult[],
   includeExercises: boolean,
+  exerciseExposure: ExerciseExposure,
   hasErrors: boolean
 ): string {
   const totalResults = hits.length + (includeExercises ? exercises.length : 0) + webHits.length;
@@ -120,7 +122,7 @@ function buildLlmContext(
   // ② 试题（仅在意图需要时加入 llmContext）
   if (includeExercises && exercises.length > 0) {
     for (let i = 0; i < exercises.length; i++) {
-      const text = formatExerciseFragment(exercises[i], i);
+      const text = formatExerciseFragment(exercises[i], i, exerciseExposure);
 
       if (fragments.length > 0 && totalLength + text.length > retrievalBudget.maxChars) {
         break;
@@ -175,13 +177,20 @@ function formatChunkFragment(hit: RetrievedChunk, index: number): string {
 /**
  * 格式化单个试题片段
  *
- * 包含题干、选项、答案和解析，LLM 根据用户问题自行决定暴露程度。
+ * 根据 exerciseExposure 策略控制暴露程度：
+ * - 'find': 只给题干和选项，避免模型剧透答案
+ * - 'explain': 给完整答案与解析，供模型讲解
  *
  * @param exercise - 试题数据
  * @param index - 序号（从 0 开始）
+ * @param exposure - 暴露策略
  * @returns 格式化后的文本
  */
-function formatExerciseFragment(exercise: RetrievedExercise, index: number): string {
+function formatExerciseFragment(
+  exercise: RetrievedExercise,
+  index: number,
+  exposure: ExerciseExposure
+): string {
   const typeLabel = EXERCISE_TYPE_LABELS[exercise.type] ?? exercise.type;
   let text = `[试题 ${index + 1}]\n题型：${typeLabel}\n题目：${exercise.stem}`;
 
@@ -189,10 +198,12 @@ function formatExerciseFragment(exercise: RetrievedExercise, index: number): str
     text += `\n选项：${exercise.options.join(' | ')}`;
   }
 
-  text += `\n答案：${exercise.answer}`;
-
-  if (exercise.explanation) {
-    text += `\n解析：${exercise.explanation}`;
+  // 仅在 'explain' 策略下暴露答案与解析
+  if (exposure === 'explain') {
+    text += `\n答案：${exercise.answer}`;
+    if (exercise.explanation) {
+      text += `\n解析：${exercise.explanation}`;
+    }
   }
 
   return text;
