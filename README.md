@@ -14,7 +14,7 @@
 
 ```text
 课程/章节数据 → HTML 清洗 → 智能分块 → Tags 提取 → Embedding 向量化
-→ Milvus + SQLite 双写 → Agent Tool 调用 → Retrieval Graph 检索编排 → SSE 流式回复
+→ Milvus + SQLite 双写 → 会话记忆加载 → AI SDK Tool Calling → Retrieval Graph 检索编排 → SSE 流式回复
 ```
 
 除了基础的 RAG 入库与问答，本项目还补齐了：
@@ -38,8 +38,8 @@ graph LR
     D --> E[(Milvus)]
     D --> F[(SQLite 元数据镜像)]
     G[用户消息] --> H[Session Memory]
-    H --> I[LangChain Agent]
-    I --> J[knowledge_search Tool]
+    H --> I[AI SDK streamText]
+    I --> J[knowledge_search / web_search]
     J --> K[Retrieval Graph]
     K --> L[课程检索]
     K --> M[文档检索]
@@ -49,7 +49,7 @@ graph LR
     M --> P
     N --> P
     O --> P
-    P --> Q[LLM 生成回复 + SSE Data Stream]
+    P --> Q[结构化消息持久化 + SSE Data Stream]
 ```
 
 ### 为什么需要三种数据库？
@@ -64,12 +64,13 @@ graph LR
 
 ## 🧩 后端核心模块
 
-| 模块               | 核心职责                                        | 关键能力                                                                |
-| ------------------ | ----------------------------------------------- | ----------------------------------------------------------------------- |
-| **RAG 知识入库**   | 课程 / 章节内容清洗、分块、打标、向量化、落库   | HTML 清洗、语义分块、批量写入、SSE 进度推送、Milvus + SQLite 双写       |
-| **AI 检索召回**    | Agent 调用检索 Tool，按图编排课程/文档/试题检索 | 意图分析、Graph 条件分支、结果聚合、充分性评估、联网兜底                |
-| **会话与记忆管理** | 维护 session、消息历史、摘要压缩与 token 水位   | Session 级互斥锁、摘要压缩、最近轮次窗口、历史消息分页                  |
-| **运维接口**       | 管理 chunk、会话、记忆状态                       | chunk 查询/修改/删除、会话 CRUD、手动压缩、token usage 查询、健康检查   |
+| 模块               | 核心职责                                            | 关键能力                                                                |
+| ------------------ | --------------------------------------------------- | ----------------------------------------------------------------------- |
+| **RAG 知识入库**   | 课程 / 章节内容清洗、分块、打标、向量化、落库       | HTML 清洗、语义分块、批量写入、SSE 进度推送、Milvus + SQLite 双写       |
+| **Chat 流式对话**  | 负责聊天入口、活跃运行控制、SSE 输出与终态快照      | AI SDK `streamText`、Tool Calling、主动中止、结构化 parts 持久化        |
+| **Retrieval Graph**| 按图编排课程/文档/试题/联网检索并组装上下文         | 意图分析、Graph 条件分支、结果聚合、充分性评估、联网兜底                |
+| **Memory 模块**    | 维护 session memory、摘要压缩、token usage 与互斥锁 | Session 级互斥锁、摘要压缩、最近轮次窗口、历史消息分页                  |
+| **运维接口**       | 管理 chunk、会话、记忆状态                           | chunk 查询/修改/删除、会话 CRUD、手动压缩、token usage 查询、健康检查   |
 
 ---
 
@@ -79,11 +80,12 @@ graph LR
 | ---------------------- | ------------------------------------ | ------------------------------------------------------------------ |
 | **Embedding 模型**     | 阿里 `text-embedding-v4`             | 默认 1024 维，可通过环境变量调整                                   |
 | **LLM（对话+意图）**   | OpenAI 兼容接口模型                  | 通过 `OPENAI_BASE_URL` + `CHAT_MODEL_NAME` 适配百炼 / OpenAI 兼容网关 |
-| **编排框架**           | LangChain + LangGraph                | Agent Tool Calling + Retrieval Graph 条件路由                      |
+| **对话执行框架**       | AI SDK + 自建 streaming 基础设施     | `streamText` + tool calling + shared stream 管道                   |
+| **检索编排**           | LangGraph                            | Retrieval Graph 条件路由                                           |
 | **流式输出协议**       | Vercel AI SDK Data Stream            | 聊天主接口返回 SSE，附带 sources / mediaRefs / exercisePreview     |
 | **向量库**             | Milvus 2.6.13                        | 启动时自动 ensure collection，支持课程 / 文档两个 collection        |
 | **业务库**             | MySQL（只读）                        | 查询课程元数据、章节内容、试题资源                                 |
-| **本地存储**           | SQLite (`better-sqlite3`)            | chunk 镜像、chat_sessions、chat_messages                           |
+| **本地存储**           | SQLite (`better-sqlite3`)            | chunk 镜像、chat_sessions、chat_messages、结构化 assistant parts   |
 | **HTML 解析**          | `cheerio`                            | 清洗教材富文本，提取结构化正文                                     |
 | **参数校验/配置兜底**  | `zod` + 自定义 env 工具              | 集中式配置读取，环境变量非法值直接 fail fast                       |
 | **并发控制与限流**     | `p-limit` + 自定义 rate limiter      | 控制入库并发、模型 RPM/TPM、Embedding RPM/TPM                      |
@@ -199,6 +201,14 @@ Content-Type: application/json
   "showReasoning": false
 }
 
+# 主动中止当前会话生成
+POST /api/chat/abort
+Content-Type: application/json
+
+{
+  "sessionId": "demo-session"
+}
+
 # 会话列表
 GET /api/sessions?page=1&pageSize=20
 
@@ -210,6 +220,9 @@ POST /api/memory/compact
 {
   "sessionId": "demo-session"
 }
+
+# 查询会话 token 使用情况
+GET /api/memory/token-usage?sessionId=demo-session
 
 # 查询 chunk 列表
 GET /api/chunks?page=1&pageSize=20&courseId=101
@@ -242,15 +255,17 @@ analyze_intent
 - ✅ 检索图以节点方式拆分，便于逐段调试与扩展
 - ✅ 每个节点完成后可回传前端进度事件，用于展示检索状态
 
-### 🔹 Agent + SSE 流式输出
+### 🔹 Chat + SSE 流式输出
 
-- ✅ 聊天接口使用 LangChain Agent 负责工具调用与回复生成
-- ✅ 输出采用 Vercel AI SDK data stream，天然适合前端流式渲染
+- ✅ 聊天主流程拆分到 `modules/chat`，按 router / service / stream-chat / utils 分层组织
+- ✅ 使用 AI SDK `streamText` 承担工具调用与回复生成，配合共享 streaming 基础设施输出 SSE
 - ✅ 除文本回复外，还会透传 `sources`、`mediaRefs`、`exercisePreview` 等结构化数据
+- ✅ 支持 `/api/chat/abort` 主动中止当前会话的活跃生成任务
 
 ### 🔹 会话记忆与压缩机制
 
 - ✅ SQLite 持久化保存会话、消息和摘要，不依赖外部缓存
+- ✅ assistant 终态按结构化 `parts + metadata` 持久化，便于历史回放和异常轮次标记
 - ✅ 基于最近轮次窗口 + 历史摘要，控制长对话上下文体积
 - ✅ 按 session 维度加互斥锁，避免并发写入导致消息顺序错乱
 - ✅ 基于 `prompt_tokens` 水位和消息数量双条件触发压缩
@@ -265,6 +280,7 @@ analyze_intent
 
 - ✅ 请求级 `AbortSignal`，客户端断连后自动中止长任务
 - ✅ Agent 日志与 SSE 调试写入器，便于排查 Tool/流式输出问题
+- ✅ provider / repository / sql / service 分层拆分，降低单文件复杂度
 - ✅ 配置集中管理，非法环境变量在启动期尽早暴露
 - ✅ 文档 collection 尚未就绪时安全降级，不阻塞主聊天流程
 
@@ -286,13 +302,16 @@ analyze_intent
     │   ├── middleware/              # 请求日志、断连中止、统一错误处理
     │   ├── providers/               # MySQL / Milvus / SQLite / LLM / Embedding / Tavily 封装
     │   ├── modules/
-    │   │   ├── ingest/              # 入库 Pipeline
-    │   │   ├── retrieval/           # 聊天、记忆、Tool、Graph、检索服务
-    │   │   ├── session/             # 会话管理接口
-    │   │   ├── chunk/               # chunk 管理接口
-    │   │   └── course/              # 课程业务查询
+    │   │   ├── chat/                # 聊天入口、stream-chat、聊天工具与运行态管理
+    │   │   ├── memory/              # 记忆服务、压缩 prompt、repository 与 session mutex
+    │   │   ├── retrieval/           # Retrieval Graph、检索服务、检索 SQL
+    │   │   ├── ingest/              # 入库 Pipeline 与 utils
+    │   │   ├── session/             # 会话管理接口 + service
+    │   │   ├── chunk/               # chunk 管理接口 + service
+    │   │   └── course/              # 课程业务查询 + SQL
     │   └── shared/
     │       ├── errors/
+    │       ├── streaming/
     │       ├── types/
     │       └── utils/
     └── tsconfig.json
