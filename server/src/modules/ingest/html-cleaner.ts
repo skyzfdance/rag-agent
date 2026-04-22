@@ -44,12 +44,21 @@ export function cleanHtml(html: string, chapterTitle: string): CleanResult {
   const headingStack: string[] = [];
   let bodySection: CleanedSection | null = null;
 
+  /**
+   * 读取当前标题路径
+   * @returns 当前节点所属的标题路径；尚未出现标题时回退到章节标题
+   */
   function currentPath(): string {
     return headingStack.length > 0 ? headingStack.join(' > ') : chapterTitle;
   }
 
+  /**
+   * 获取当前正文 section
+   * @returns 当前可写入正文、媒体和试题引用的 section
+   */
   function getBody(): CleanedSection {
     if (!bodySection) {
+      // 正文 section 采用惰性创建，这样纯标题章节不会生成空 section 污染后续分块结果。
       bodySection = {
         contentType: ContentType.BODY,
         headingPath: currentPath(),

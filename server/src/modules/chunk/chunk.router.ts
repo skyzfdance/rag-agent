@@ -1,15 +1,9 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import type { Request, Response, NextFunction } from 'express';
-import {
-  listChunks,
-  getChunkById,
-  updateChunkMeta,
-  deleteChunkById,
-} from '@/providers/sqlite.provider';
-import { getById, upsert, deleteById } from '@/providers/milvus.provider';
 import { sendSuccess } from '@/shared/utils/response';
 import { AppError } from '@/shared/errors/app-error';
 import type { MediaRef } from '@/shared/types/index';
+import { getChunkDetail, listChunkPage, removeChunk, updateChunk } from './chunk.service';
 
 /** Chunk 管理路由 */
 export const chunkRouter: ExpressRouter = Router();
@@ -47,7 +41,7 @@ chunkRouter.get('/', (req: Request, res: Response, next: NextFunction) => {
     const courseId = parseOptionalInt(req.query.courseId, 'courseId');
     const chapterId = parseOptionalInt(req.query.chapterId, 'chapterId');
 
-    const result = listChunks(page, pageSize, courseId, chapterId);
+    const result = listChunkPage(page, pageSize, courseId, chapterId);
     sendSuccess(res, { ...result, page, pageSize });
   } catch (err) {
     next(err);
@@ -60,10 +54,7 @@ chunkRouter.get('/', (req: Request, res: Response, next: NextFunction) => {
  */
 chunkRouter.get('/:id', (req: Request<{ id: string }>, res: Response, next: NextFunction) => {
   try {
-    const chunk = getChunkById(req.params.id);
-    if (!chunk) {
-      throw new AppError('chunk 不存在', 404);
-    }
+    const chunk = getChunkDetail(req.params.id);
 
     sendSuccess(res, chunk);
   } catch (err) {
@@ -94,26 +85,7 @@ chunkRouter.patch(
         throw new AppError('至少传入 tags 或 mediaRefs', 400);
       }
 
-      // 先确认 chunk 在 SQLite 中存在
-      const existing = getChunkById(id);
-      if (!existing) {
-        throw new AppError('chunk 不存在', 404);
-      }
-
-      // ① 先更新 Milvus：读取完整记录 → 修改 → upsert
-      const milvusRecord = await getById(id);
-      if (!milvusRecord) {
-        throw new AppError('chunk 在向量库中不存在，数据不一致', 500);
-      }
-      if (tags !== undefined) milvusRecord.tags = tags;
-      if (mediaRefs !== undefined) milvusRecord.media_refs = mediaRefs;
-      await upsert([milvusRecord]);
-
-      // ② 再更新 SQLite
-      const sqliteFields: { tags?: string; mediaRefs?: string } = {};
-      if (tags !== undefined) sqliteFields.tags = JSON.stringify(tags);
-      if (mediaRefs !== undefined) sqliteFields.mediaRefs = JSON.stringify(mediaRefs);
-      updateChunkMeta(id, sqliteFields);
+      await updateChunk({ id, tags, mediaRefs });
 
       sendSuccess(res, null);
     } catch (err) {
@@ -135,17 +107,7 @@ chunkRouter.delete(
     try {
       const { id } = req.params;
 
-      // 先确认 SQLite 中存在
-      const existing = getChunkById(id);
-      if (!existing) {
-        throw new AppError('chunk 不存在', 404);
-      }
-
-      // ① 先删 Milvus
-      await deleteById(id);
-
-      // ② 再删 SQLite
-      deleteChunkById(id);
+      await removeChunk(id);
 
       sendSuccess(res, null);
     } catch (err) {

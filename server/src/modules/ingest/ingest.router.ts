@@ -30,11 +30,15 @@ async function handleSse(
 
   const startTime = Date.now();
 
-  /** 将进度事件桥接为 SSE 推送 */
-  const onProgress: OnProgress = (event) => {
+  /**
+   * 推送单条 Pipeline 进度事件
+   * @param event - 当前步骤的进度事件
+   * @returns 无返回值
+   */
+  function onProgress(event: Parameters<OnProgress>[0]): void {
     if (res.writableEnded) return;
     res.write(`event: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`);
-  };
+  }
 
   try {
     const totalChunks = await runPipeline(onProgress);

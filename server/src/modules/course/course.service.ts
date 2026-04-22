@@ -7,6 +7,12 @@ import type {
   ChapterResource,
   ChapterResourceRow,
 } from './course.types';
+import {
+  GET_COURSE_SQL,
+  buildGetChapterResourcesSql,
+  GET_CHAPTER_SQL,
+  GET_CHAPTERS_SQL,
+} from './sql/course.sql';
 
 /**
  * 查询课程基本信息
@@ -14,9 +20,7 @@ import type {
  * @returns 课程信息，不存在时返回 null
  */
 export async function getCourse(courseId: number): Promise<Course | null> {
-  const rows = await query<CourseRow>('SELECT id, title, description FROM {表名} WHERE id = ?', [
-    courseId,
-  ]);
+  const rows = await query<CourseRow>(GET_COURSE_SQL, [courseId]);
   return rows[0] ?? null;
 }
 
@@ -37,12 +41,11 @@ export async function getChapterResources(
 ): Promise<ChapterResource[]> {
   if (attachIds.length === 0) return [];
   const placeholders = attachIds.map(() => '?').join(', ');
-  return query<ChapterResourceRow>(
-    `SELECT id, curriculum_id, chapter_id, attach, resource
-     FROM {表名}
-     WHERE curriculum_id = ? AND chapter_id = ? AND attach IN (${placeholders})`,
-    [courseId, chapterId, ...attachIds]
-  );
+  return query<ChapterResourceRow>(buildGetChapterResourcesSql(placeholders), [
+    courseId,
+    chapterId,
+    ...attachIds,
+  ]);
 }
 
 /**
@@ -57,12 +60,7 @@ export async function getChapter(
   chapterId: number,
   status = 3
 ): Promise<Chapter | null> {
-  const rows = await query<ChapterRow>(
-    `SELECT id, pid, title, content, mate_content
-     FROM {表名}
-     WHERE curriculum_id = ? AND id = ? AND status = ?`,
-    [courseId, chapterId, status]
-  );
+  const rows = await query<ChapterRow>(GET_CHAPTER_SQL, [courseId, chapterId, status]);
   return rows[0] ?? null;
 }
 
@@ -73,12 +71,5 @@ export async function getChapter(
  * @returns 章节列表
  */
 export async function getChapters(courseId: number, status = 3): Promise<Chapter[]> {
-  return query<ChapterRow>(
-    `SELECT id, pid, title, content, mate_content
-     FROM {表名}
-     WHERE curriculum_id = ? 
-     AND status = ?
-     ORDER BY pid ASC, id ASC`,
-    [courseId, status]
-  );
+  return query<ChapterRow>(GET_CHAPTERS_SQL, [courseId, status]);
 }

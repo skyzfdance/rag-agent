@@ -1,5 +1,5 @@
 import { embedQuery } from '@/providers/embedding.provider';
-import { search, getClient } from '@/providers/milvus.provider';
+import { search, getClient } from '@/providers/milvus';
 import { getMilvusConfig } from '@/config/milvus';
 import { getRetrievalConfig } from '@/config/retrieval';
 import type { MediaRef } from '@/shared/types/index';

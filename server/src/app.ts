@@ -4,9 +4,9 @@ import { abortOnDisconnect } from '@/middleware/abort-on-disconnect';
 import { requestLogger } from '@/middleware/request-logger';
 import { errorHandler } from '@/middleware/error-handler';
 import ingestRouter from '@/modules/ingest/ingest.router';
-import retrievalRouter from '@/modules/retrieval/retrieval.router';
+import chatRouter from '@/modules/chat/chat.router';
 import { sessionRouter } from '@/modules/session/session.router';
-import { memoryRouter } from '@/modules/retrieval/memory.router';
+import { memoryRouter } from '@/modules/memory/memory.router';
 import { chunkRouter } from '@/modules/chunk/chunk.router';
 
 /**
@@ -35,7 +35,7 @@ function createApp(): Application {
 
   // 业务路由
   app.use('/api/ingest', ingestRouter);
-  app.use('/api/chat', retrievalRouter);
+  app.use('/api/chat', chatRouter);
   app.use('/api/sessions', sessionRouter);
   app.use('/api/memory', memoryRouter);
   app.use('/api/chunks', chunkRouter);

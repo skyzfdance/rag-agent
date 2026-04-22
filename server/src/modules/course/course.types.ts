@@ -30,7 +30,7 @@ export interface CourseRow extends Course, RowDataPacket {}
 /** MySQL 查询行类型：章节 */
 export interface ChapterRow extends Chapter, RowDataPacket {}
 
-/** 章节扩展资源（fa_textbooks_chapter_resource 表） */
+/** 章节扩展资源 */
 export interface ChapterResource {
   /** 资源 ID */
   id: number;

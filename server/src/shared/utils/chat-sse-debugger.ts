@@ -32,7 +32,9 @@ export function createChatSseDebugWriter(options: { sessionId: string; message: 
   if (process.env.NODE_ENV !== 'development') {
     return {
       filePath: null,
+      /** 开发日志关闭时返回空实现，避免调用方额外分支判断。 */
       appendMarker() {},
+      /** 开发日志关闭时返回空实现，避免影响正常聊天流程。 */
       consumeSseStream() {},
     };
   }
@@ -48,16 +50,25 @@ export function createChatSseDebugWriter(options: { sessionId: string; message: 
 
   let isClosed = false;
 
-  const writeLine = (text: string): void => {
+  /**
+   * 追加一行原始调试文本
+   * @param text - 需要写入文件的文本
+   * @returns 无返回值
+   */
+  function writeLine(text: string): void {
     if (isClosed) return;
     output.write(text);
-  };
+  }
 
-  const close = (): void => {
+  /**
+   * 关闭底层文件写入流
+   * @returns 无返回值
+   */
+  function close(): void {
     if (isClosed) return;
     isClosed = true;
     output.end();
-  };
+  }
 
   writeLine(
     [
@@ -71,6 +82,12 @@ export function createChatSseDebugWriter(options: { sessionId: string; message: 
 
   return {
     filePath,
+    /**
+     * 追加一条结构化调试标记
+     * @param marker - 标记名称
+     * @param extra - 附加调试字段
+     * @returns 无返回值
+     */
     appendMarker(marker, extra = {}) {
       writeLine(
         `${JSON.stringify({
@@ -85,6 +102,11 @@ export function createChatSseDebugWriter(options: { sessionId: string; message: 
         close();
       }
     },
+    /**
+     * 消费 SSE 文本流并完整写入调试文件
+     * @param payload - 只包含 stream 的包装对象
+     * @returns 无返回值
+     */
     consumeSseStream({ stream }) {
       void (async () => {
         const reader = stream.getReader();

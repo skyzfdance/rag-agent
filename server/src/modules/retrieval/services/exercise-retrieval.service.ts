@@ -2,8 +2,9 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { query } from '@/providers/mysql.provider';
 import { getRetrievalConfig } from '@/config/retrieval';
 import type { RetrievedExercise, ExerciseType } from '../retrieval.types';
+import { buildSearchExerciseResourcesSql, buildSearchQuestionsSql } from '../sql/exercise.sql';
 
-/** MySQL fa_course_questions 行类型 */
+/** MySQL 行类型 */
 interface QuestionRow extends RowDataPacket {
   /** 试题 ID */
   id: number;
@@ -29,7 +30,7 @@ interface QuestionRow extends RowDataPacket {
   analysis: string | null;
 }
 
-/** MySQL fa_textbooks_chapter_resource 行类型 */
+/** MySQL 行类型 */
 interface ResourceRow extends RowDataPacket {
   /** 课程 ID */
   curriculum_id: number;
@@ -108,10 +109,6 @@ function toRetrievedExercise(
  * 按课程章节引用检索试题
  *
  * 两步查询：
- * 1. 从 fa_textbooks_chapter_resource 获取 resource_type='test' 的资源行，
- *    解析逗号分隔的试题 ID
- * 2. 批量查询 fa_course_questions 获取试题详情
- *
  * 试题数量受 maxExercises 配置限制。
  *
  * @param chapterRefs - 课程+章节引用列表（通常来自课程检索的 topChapterRefs）
@@ -126,12 +123,7 @@ export async function searchExercises(chapterRefs: ChapterRef[]): Promise<Retrie
   const conditions = chapterRefs.map(() => '(curriculum_id = ? AND chapter_id = ?)').join(' OR ');
   const params = chapterRefs.flatMap((ref) => [ref.courseId, ref.chapterId]);
 
-  const resources = await query<ResourceRow>(
-    `SELECT curriculum_id, chapter_id, resource
-     FROM {表名}
-     WHERE resource_type = 'test' AND (${conditions})`,
-    params
-  );
+  const resources = await query<ResourceRow>(buildSearchExerciseResourcesSql(conditions), params);
 
   // ② 解析试题 ID 并记录章节归属
   const questionChapterMap = new Map<number, ChapterRef>();
@@ -158,13 +150,7 @@ export async function searchExercises(chapterRefs: ChapterRef[]): Promise<Retrie
   const questionIds = [...questionChapterMap.keys()];
   const placeholders = questionIds.map(() => '?').join(', ');
 
-  const questions = await query<QuestionRow>(
-    `SELECT id, type, title, option_A, option_B, option_C, option_D, option_E, option_F,
-            right_key, analysis
-     FROM {表名}
-     WHERE id IN (${placeholders}) AND status = 'normal'`,
-    questionIds
-  );
+  const questions = await query<QuestionRow>(buildSearchQuestionsSql(placeholders), questionIds);
 
   // ④ 映射并限制数量
   const exercises = questions.map((q) => {

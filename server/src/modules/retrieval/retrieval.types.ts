@@ -111,23 +111,33 @@ export interface RetrievedSource {
 /** 允许持久化的 assistant part */
 export type PersistedAssistantPart =
   | {
+      /** part 类型，表示普通正文文本 */
       type: 'text';
+      /** 正文内容 */
       text: string;
     }
   | {
+      /** part 类型，表示 reasoning 文本 */
       type: 'reasoning';
+      /** 思考内容 */
       text: string;
     }
   | {
+      /** part 类型，表示媒体引用集合 */
       type: 'data-media-refs';
+      /** 媒体引用数据 */
       data: MediaRef[];
     }
   | {
+      /** part 类型，表示来源引用集合 */
       type: 'data-sources';
+      /** 来源引用数据 */
       data: RetrievedSource[];
     }
   | {
+      /** part 类型，表示题目预览集合 */
       type: 'data-exercise-preview';
+      /** 题目预览数据 */
       data: RetrievedExercisePreview[];
     };
 
@@ -156,8 +166,6 @@ export type ExerciseType = 'single' | 'multiple' | 'judge' | 'answer' | 'fill';
 
 /**
  * 检索命中的试题
- *
- * 从 MySQL fa_course_questions 表查询，经 fa_textbooks_chapter_resource 关联课程章节。
  */
 export interface RetrievedExercise {
   /** 试题 ID */

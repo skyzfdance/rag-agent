@@ -2,7 +2,8 @@ import { Router, type Router as ExpressRouter } from 'express';
 import type { Request, Response } from 'express';
 import { sendSuccess } from '@/shared/utils/response';
 import { AppError } from '@/shared/errors/app-error';
-import { abortActiveChat, streamChat } from './retrieval.service';
+import { getSignal } from '@/middleware/abort-on-disconnect';
+import { abortActiveChat, streamChat } from './chat.service';
 
 const router: ExpressRouter = Router();
 
@@ -23,6 +24,7 @@ router.post('/', async (req: Request, res: Response) => {
     message: string;
     showReasoning?: boolean | string;
   };
+  const signal = getSignal(req);
 
   if (!sessionId || !message) {
     throw new AppError('缺少 sessionId 或 message', 400);
@@ -30,6 +32,7 @@ router.post('/', async (req: Request, res: Response) => {
 
   await streamChat(sessionId, message, res, {
     // 兼容前端传入字符串 "true"/"false" 的情况
+    signal,
     showReasoning: showReasoning === true || showReasoning === 'true',
   });
 });

@@ -1,14 +1,13 @@
 import { Router, type Router as ExpressRouter } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import {
-  listSessions,
-  getSessionMessages,
-  updateSessionTitle,
-  deleteSession,
-} from '@/providers/sqlite.provider';
+  getSessionMessagePage,
+  listSessionPage,
+  removeSession,
+  renameSession,
+} from './session.service';
 import { sendSuccess } from '@/shared/utils/response';
 import { AppError } from '@/shared/errors/app-error';
-import { withSessionMutex } from '@/modules/retrieval/memory.service';
 
 /** 会话管理路由 */
 export const sessionRouter: ExpressRouter = Router();
@@ -28,7 +27,7 @@ sessionRouter.get('/', (req: Request, res: Response, next: NextFunction) => {
     const pageSize = Math.max(1, Math.min(100, Number(req.query.pageSize) || 20));
     const keyword = req.query.keyword ? String(req.query.keyword) : undefined;
 
-    const result = listSessions(page, pageSize, keyword);
+    const result = listSessionPage(page, pageSize, keyword);
     sendSuccess(res, { ...result, page, pageSize });
   } catch (err) {
     next(err);
@@ -51,7 +50,7 @@ sessionRouter.get(
       const page = Math.max(1, Number(req.query.page) || 1);
       const pageSize = Math.max(1, Math.min(100, Number(req.query.pageSize) || 40));
 
-      const result = getSessionMessages(sessionId, page, pageSize);
+      const result = getSessionMessagePage(sessionId, page, pageSize);
       sendSuccess(res, { ...result, page, pageSize });
     } catch (err) {
       next(err);
@@ -76,7 +75,7 @@ sessionRouter.patch(
         throw new AppError('title 不能为空', 400);
       }
 
-      const updated = updateSessionTitle(sessionId, title.trim());
+      const updated = renameSession(sessionId, title.trim());
       if (!updated) {
         throw new AppError('会话不存在', 404);
       }
@@ -101,7 +100,7 @@ sessionRouter.delete(
       const { sessionId } = req.params;
 
       // 在 session mutex 内执行删除，防止与 saveMessagesUnsafe / updatePromptTokens 竞争
-      const deleted = await withSessionMutex(sessionId, () => deleteSession(sessionId));
+      const deleted = await removeSession(sessionId);
       if (!deleted) {
         throw new AppError('会话不存在', 404);
       }

@@ -1,5 +1,5 @@
 import { embedQuery } from '@/providers/embedding.provider';
-import { search } from '@/providers/milvus.provider';
+import { search } from '@/providers/milvus';
 import { getRetrievalConfig } from '@/config/retrieval';
 import type { MediaRef } from '@/shared/types/index';
 import type { RetrievedChunk, RetrievedSource, RetrievalResult } from '../retrieval.types';

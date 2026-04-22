@@ -1,6 +1,12 @@
 import { Annotation } from '@langchain/langgraph';
 import type { MediaRef } from '@/shared/types/index';
-import type { RetrievedChunk, RetrievedSource, RetrievedExercise, RetrievedWebResult, RetrievalResult } from '../retrieval.types';
+import type {
+  RetrievedChunk,
+  RetrievedSource,
+  RetrievedExercise,
+  RetrievedWebResult,
+  RetrievalResult,
+} from '../retrieval.types';
 
 // ──────────────────────────────────────────────
 // 子类型定义

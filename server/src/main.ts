@@ -1,8 +1,8 @@
 import 'dotenv-flow/config';
 import app from '@/app';
 import { getServerConfig } from '@/config/index';
-import { ensureCollection } from '@/providers/milvus.provider';
-import { getDb } from '@/providers/sqlite.provider';
+import { ensureCollection } from '@/providers/milvus';
+import { getDb } from '@/providers/sqlite';
 
 const { port } = getServerConfig();
 
